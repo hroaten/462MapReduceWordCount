@@ -49,12 +49,22 @@ size_t read_file (char* fname, queue<pair<string, size_t>> &q) {
     return wc;
 }
 
-int hash(string s, int R) {
+int hash_str(string s, int R) {
     int sum = 0;
     for (unsigned char c : s) {
         sum  += c;
     }
     return sum % R;
+}
+
+int find_entry(vector<pair<string, size_t>> &result, string &entry) {
+    int i;
+    for (i = 0; i < result.size(); ++i) {
+        if (entry.compare(result[i].first) == 0) {
+            return i;
+        }
+    }
+    return -1;
 }
 
 int main(int argc, char* argv[]) {
@@ -69,9 +79,11 @@ int main(int argc, char* argv[]) {
     start = omp_get_wtime();
 
     queue<pair<string, size_t>> readers_q;
-    vector<queue<pair<string, size_t>>> reducer_queues(n_threads);
+    int num_reducers = n_threads;
+    vector<queue<pair<string, size_t>>> reducer_queues(num_reducers);
     size_t total_word_count = 0;
     size_t files_remain = argc - 1;
+    vector<pair<string, size_t>> counts;
 
     #pragma omp parallel
     {
@@ -94,12 +106,12 @@ int main(int argc, char* argv[]) {
             }
 
             // Mapping step
-            // int num_mappers = n_threads / 2;
-            for (int i = 0; i < n_threads; ++i) {
+            int num_mappers = n_threads;  // how many mappers?
+            for (int i = 0; i < num_mappers; ++i) {
                 #pragma omp task
                 {
                     // NOTE: may want to isolate this code in a map() function
-                    unordered_map<string, size_t> combined_recs;
+                    unordered_map<string, vector<size_t>> buckets;
                     while (true) {
                         bool not_empty = 0;
                         pair<string, size_t> cur_element;
@@ -113,40 +125,62 @@ int main(int argc, char* argv[]) {
                         }
                         if (not_empty) {
                             // Queue not empty -- process new element
-                            combined_recs[cur_element.first]++;
+                            buckets[cur_element.first].push_back(cur_element.second);
                         }
                         else if (files_remain == 0) {
                             // Queue empty and all files are processed
                             break;
                         }
                     }
-                    // TODO: push map elements to reducer's queue, compute index using hash(first, num_reducers)
+                    // Push thread's results into the reducer queues
+                    for (auto el : buckets) {
+                        int index = hash_str(el.first, num_reducers);
+                        pair<string, size_t> new_pair = pair(el.first, el.second.size());
+                        #pragma omp critical
+                        {
+                            reducer_queues[index].push(new_pair);
+                        }
+                    }
                 }
             }
-
         }
+    }
+    // In place of a barrier for now
+    #pragma omp parallel
+    {
+        #pragma omp single
+        {
+            // Reducing step
+            for (size_t i = 0; i < num_reducers; ++i) {
+                #pragma omp task
+                {
+                    while (!reducer_queues[i].empty()) {
+                        pair<string, size_t> cur_entry = reducer_queues[i].front();
+                        reducer_queues[i].pop();
+                        int ind = find_entry(counts, cur_entry.first);
 
-
-        // Shuffle step
-        unordered_map<string, vector<size_t>> buckets;
-        for (size_t i = 0; i < raw_tuples.size(); ++i) {
-            buckets[raw_tuples[i].first].push_back(raw_tuples[i].second);
-        }
-
-        // Reduce step
-        vector<pair<string, size_t>> counts;
-        for (auto entry : buckets) {
-            size_t sum = 0;
-            for (size_t i = 0; i < entry.second.size(); ++i) {
-                sum += entry.second[i];
+                        // If entry has not been seen before -- push it to result vector
+                        if (ind == -1) {
+                            #pragma omp critical
+                            {
+                                counts.push_back(cur_entry);
+                            }
+                        }
+                        else {
+                            // Otherwise, lock and update its count
+                            #pragma omp critical
+                            {
+                                counts[ind].second += cur_entry.second;
+                            }
+                        }
+                    }
+                }
             }
-            counts.push_back(pair(entry.first, sum));
         }
-
     }
 
     // Sort in alphabetical order
-    sort(counts.begin(), counts.end(), [](const pair<string, int> &a, const pair<string, int> &b) {
+    sort(counts.begin(), counts.end(), [](const pair<string, size_t> &a, const pair<string, int> &b) {
         return a.first < b.first;
     });
 
@@ -158,7 +192,7 @@ int main(int argc, char* argv[]) {
 
     end = omp_get_wtime();
     // Use cerr to always print in terminal
-    cerr << "Sequential time: " << (end - start) * 1000 << " ms\n";
+    cerr << "OpenMP time: " << (end - start) * 1000 << " ms\n";
 
     return 0;
 }
