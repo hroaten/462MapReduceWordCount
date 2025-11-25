@@ -10,6 +10,18 @@
 
 using namespace std;
 
+queue<string> readers_q;
+vector<queue<pair<string, size_t>>> reducer_queues;
+unordered_map<string, size_t> global_counts;
+
+size_t total_words;
+size_t files_remain;
+int num_reducers;
+
+omp_lock_t readers_lock;
+vector<omp_lock_t> reducer_locks;
+omp_lock_t global_counts_lock;
+
 void process_word(string &w) {
     // Remove punctuation at beginning
     while (!w.empty() && ispunct(w[0])) {
@@ -27,7 +39,7 @@ void process_word(string &w) {
     }
 }
 
-size_t read_file (char* fname, queue<pair<string, size_t>> &q) {
+void read_file (char* fname) {
     size_t wc = 0;
     ifstream fin(fname);
     if (!fin) {
@@ -37,16 +49,19 @@ size_t read_file (char* fname, queue<pair<string, size_t>> &q) {
 
     string word;
     while (fin >> word) {
-        wc++;
         process_word(word);
         if (!word.empty()) {          // avoid pushing empty strings
-            # pragma omp critical
-            {
-                q.push(pair(word, 1));
-            }
+            wc++;
+            omp_set_lock(&readers_lock);
+            readers_q.push(word);
+            omp_unset_lock(&readers_lock);
         }
     }
-    return wc;
+    #pragma omp atomic
+    total_words += wc;
+
+    #pragma omp atomic
+    files_remain--;
 }
 
 int hash_str(string s, int R) {
@@ -57,14 +72,65 @@ int hash_str(string s, int R) {
     return sum % R;
 }
 
-int find_entry(vector<pair<string, size_t>> &result, string &entry) {
-    int i;
-    for (i = 0; i < result.size(); ++i) {
-        if (entry.compare(result[i].first) == 0) {
-            return i;
+void mapping_step() {
+    unordered_map<string, size_t> buckets;
+
+    while (true) {
+        bool not_empty = false;
+
+        string cur_element;
+        // Lock and grab new element if queue is not empty
+        omp_set_lock(&readers_lock);
+        if (!readers_q.empty()) {
+            cur_element = readers_q.front();
+            readers_q.pop();
+            not_empty = true;
+        }
+        omp_unset_lock(&readers_lock);
+
+        if (not_empty) {
+            // Queue not empty -- process new element
+            buckets[cur_element]++;
+        }
+        else {
+            int remaining;
+            // Shared global variable -- must be read atomically
+            #pragma omp atomic read
+            remaining = files_remain;
+
+            if (remaining == 0) {
+                // Queue empty and all files are processed
+                break;
+            }
+            else {
+                #pragma omp taskyield
+            }
         }
     }
-    return -1;
+
+    // Push thread's results into the reducer queues
+    for (auto el : buckets) {
+        int index = hash_str(el.first, num_reducers);
+        omp_set_lock(&reducer_locks[index]);
+        reducer_queues[index].push(el);
+        omp_unset_lock(&reducer_locks[index]);
+    }
+}
+
+void reduce_step(int id) {
+    // Use local hash table for partial results
+    unordered_map<string, size_t> local_result;
+    while (!reducer_queues[id].empty()) {
+        pair<string, size_t> cur_entry = reducer_queues[id].front();
+        reducer_queues[id].pop();
+        local_result[cur_entry.first] += cur_entry.second;
+    }
+    // Merge partial results into global results
+    omp_set_lock(&global_counts_lock);
+    for (auto &el : local_result) {
+        global_counts[el.first] += el.second;
+    }
+    omp_unset_lock(&global_counts_lock);
 }
 
 int main(int argc, char* argv[]) {
@@ -73,17 +139,23 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    int n_threads = 4;
+    int n_threads = 8;
     omp_set_num_threads(n_threads);
+
+    int num_mappers = n_threads;
+    num_reducers = n_threads * 2;
+    files_remain = argc - 1;
+
+    omp_init_lock(&readers_lock);
+    omp_init_lock(&global_counts_lock);
+    reducer_locks.resize(num_reducers);
+    for (size_t i = 0; i < num_reducers; ++i) {
+        omp_init_lock(&reducer_locks[i]);
+    }
+    reducer_queues.resize(num_reducers);
+
     double start, end;
     start = omp_get_wtime();
-
-    queue<pair<string, size_t>> readers_q;
-    int num_reducers = n_threads;
-    vector<queue<pair<string, size_t>>> reducer_queues(num_reducers);
-    size_t total_word_count = 0;
-    size_t files_remain = argc - 1;
-    vector<pair<string, size_t>> counts;
 
     #pragma omp parallel
     {
@@ -94,98 +166,45 @@ int main(int argc, char* argv[]) {
             while (argv[f_count]) {
                 #pragma omp task firstprivate(f_count)
                 {
-                    size_t wc = read_file(argv[f_count], readers_q);
-
-                    #pragma omp atomic
-                    total_word_count += wc;
-
-                    #pragma omp atomic
-                    files_remain--;
+                    read_file(argv[f_count]);
                 }
                 f_count++;
             }
 
             // Mapping step
-            int num_mappers = n_threads;  // how many mappers?
             for (int i = 0; i < num_mappers; ++i) {
                 #pragma omp task
                 {
-                    // NOTE: may want to isolate this code in a map() function
-                    unordered_map<string, vector<size_t>> buckets;
-                    while (true) {
-                        bool not_empty = 0;
-                        pair<string, size_t> cur_element;
-                        #pragma omp critical
-                        {
-                            // Lock and grab new element if queue is not empty
-                            if (not_empty = !readers_q.empty()) {
-                                cur_element = readers_q.front();
-                                readers_q.pop();
-                            }
-                        }
-                        if (not_empty) {
-                            // Queue not empty -- process new element
-                            buckets[cur_element.first].push_back(cur_element.second);
-                        }
-                        else if (files_remain == 0) {
-                            // Queue empty and all files are processed
-                            break;
-                        }
-                    }
-                    // Push thread's results into the reducer queues
-                    for (auto el : buckets) {
-                        int index = hash_str(el.first, num_reducers);
-                        pair<string, size_t> new_pair = pair(el.first, el.second.size());
-                        #pragma omp critical
-                        {
-                            reducer_queues[index].push(new_pair);
-                        }
-                    }
+                    mapping_step();
+                }
+            }
+
+            // Wait for readers + reducers to complete
+            #pragma omp taskwait
+
+            // Reducing step
+            for (int i = 0; i < num_reducers; ++i) {
+                #pragma omp task firstprivate(i)
+                {
+                    reduce_step(i);
                 }
             }
         }
     }
-    // In place of a barrier for now
-    #pragma omp parallel
-    {
-        #pragma omp single
-        {
-            // Reducing step
-            for (size_t i = 0; i < num_reducers; ++i) {
-                #pragma omp task
-                {
-                    while (!reducer_queues[i].empty()) {
-                        pair<string, size_t> cur_entry = reducer_queues[i].front();
-                        reducer_queues[i].pop();
-                        int ind = find_entry(counts, cur_entry.first);
 
-                        // If entry has not been seen before -- push it to result vector
-                        if (ind == -1) {
-                            #pragma omp critical
-                            {
-                                counts.push_back(cur_entry);
-                            }
-                        }
-                        else {
-                            // Otherwise, lock and update its count
-                            #pragma omp critical
-                            {
-                                counts[ind].second += cur_entry.second;
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    vector<pair<string, size_t>> counts;
+    for (auto &el : global_counts) {
+        counts.emplace_back(el.first, el.second);
     }
 
     // Sort in alphabetical order
-    sort(counts.begin(), counts.end(), [](const pair<string, size_t> &a, const pair<string, int> &b) {
+    sort(counts.begin(), counts.end(),
+         [](const auto &a, const auto &b) {
         return a.first < b.first;
     });
 
     // Print step
-    cout << "Filename: " << argv[1] << ", total words: " << total_word_count << endl;
+    cout << "Filename: " << argv[1] << ", total words: " << total_words << endl;
     for (size_t i = 0; i < counts.size(); ++i) {
         cout << "[" << i << "] " << counts[i].first << ": " << counts[i].second << endl;
     }
