@@ -2,7 +2,7 @@ CC = g++
 CFLAGS = -fopenmp -Wall -O3
 LDFLAGS = -lm
 
-all: seq omp
+all: seq omp hybrid
 
 seq: sequential.cpp
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
@@ -10,5 +10,8 @@ seq: sequential.cpp
 omp: omp.cpp
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
+hybrid:
+	mpicc $(CFLAGS) -o $@ $< $(LDFLAGS)
+
 clean:
-	rm -f seq omp *.txt
+	rm -f seq omp hybrid *.txt
