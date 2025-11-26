@@ -218,35 +218,6 @@ void exchange_data(int my_rank) {
     }
 }
 
-void receive_data(int my_rank) {
-    for (int i = 0; i < total_ranks; ++i) {
-        if (i == my_rank) {
-            continue;
-        }
-
-        // Receive total buffer size
-        int N;
-        MPI_Recv(&N, 1, MPI_INT, i, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-
-        for (int j = 0; j < N; ++j) {
-            // Receive words
-            int w_len;
-            string w;
-            MPI_Recv(&w_len, 1, MPI_INT, i, 2, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-            w.resize(w_len);
-            MPI_Recv(&w[0], w_len, MPI_CHAR, i, 3, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-
-            // Receive counts
-            int count;
-            MPI_Recv(&count, 1, MPI_INT, i, 4, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-
-            // Push to reducer queue
-            int ind = hash_str(w, num_reducers);
-            reducer_queues[ind].push_back({w, count});
-        }
-    }
-}
-
 void reduce_step(int id) {
     // Use local hash table for partial results
     unordered_map<string, int> local_result;
@@ -450,6 +421,14 @@ int main(int argc, char* argv[]) {
         gather_results(rank);
     }
 
+    size_t global_total_words = 0;
+    MPI_Reduce(&total_words, &global_total_words, 1,
+            MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+
+    if (rank == 0) {
+        total_words = global_total_words;
+    }
+
     start_p = MPI_Wtime();
     vector<pair<string, int>> counts;
     for (auto &el : global_counts) {
@@ -464,7 +443,7 @@ int main(int argc, char* argv[]) {
 
     // Print step
     if (rank == 0) {
-        cout << "Filename: " << argv[1] << ", total words: " << total_words << endl;
+        cout << "Filename: " << argv[1] << ", total words: " << global_total_words << endl;
         // ISAAC is having issues printing too much output, only print the number of unique words
         // Error: srun: error: eio_handle_mainloop: Abandoning IO 60 secs after job shutdown initiated
         cout << "Unique words found: " << counts.size() << endl;
