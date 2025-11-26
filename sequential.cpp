@@ -54,7 +54,7 @@ int main(int argc, char* argv[]) {
             // Map step
             if (!word.empty()) {          // avoid pushing empty strings
                 file_word_count++;
-                raw_tuples.push_back(pair(word, 1));
+                raw_tuples.push_back({word, 1});
             }
         }
         f_count++;
@@ -73,7 +73,7 @@ int main(int argc, char* argv[]) {
         for (size_t i = 0; i < entry.second.size(); ++i) {
             sum += entry.second[i];
         }
-        counts.push_back(pair(entry.first, sum));
+        counts.push_back({entry.first, sum});
     }
 
     // Sort in alphabetical order
