@@ -10,12 +10,12 @@
 using namespace std;
 
 void process_word(string &w) {
-    // Remove punctuation at beginning
-    while (!w.empty() && ispunct(w[0])) {
+    // Remove punctuation and non-ascii chars at beginning
+    while (!w.empty() && w[0] > 0 &&ispunct(w[0])) {
         w.erase(0, 1);
     }
-    // Remove punctuation at end
-    while (!w.empty() && ispunct(w[w.size() - 1])) {
+    // Remove punctuation and non-ascii chars at end
+    while (!w.empty() && w[w.size() - 1] > 0 && ispunct(w[w.size() - 1])) {
         w.pop_back();
     }
     // Convert all letters to lowercase
