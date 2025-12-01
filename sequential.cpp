@@ -49,7 +49,6 @@ int main(int argc, char* argv[]) {
     double start, end;
     start = omp_get_wtime();
 
-
     // File reading step
     size_t f_count = 1;
     while (argv[f_count]) {
@@ -76,7 +75,7 @@ int main(int argc, char* argv[]) {
     for (size_t i = 0; i < raw_tuples.size(); ++i) {
         buckets[raw_tuples[i].first].push_back(raw_tuples[i].second);
     }
-
+    double start_r = omp_get_wtime();
     // Reduce step
     vector<pair<string, size_t>> counts;
     for (auto entry : buckets) {
@@ -86,14 +85,14 @@ int main(int argc, char* argv[]) {
         }
         counts.push_back({entry.first, sum});
     }
-
+    double start_p = omp_get_wtime();
     // Sort in alphabetical order
     sort(counts.begin(), counts.end(), [](const pair<string, int> &a, const pair<string, int> &b) {
         return a.first < b.first;
     });
 
     // Writing step
-    ofstream fout("results_omp.txt");
+    ofstream fout("results_seq.txt");
     fout << "Filename: " << argv[1] << ", total words: " << file_word_count << '\n';
     for (size_t i = 0; i < counts.size(); ++i) {
         fout << "[" << i << "] " << counts[i].first << ": " << counts[i].second << '\n';
@@ -102,6 +101,8 @@ int main(int argc, char* argv[]) {
     end = omp_get_wtime();
     // Use cerr to always print in terminal
     cerr << "Sequential time: " << (end - start) * 1000 << " ms\n";
-
+    cerr << "\tFile Read & Map time: " << (start_r - start) * 1000 << " ms\n"; 
+    cerr << "\tReduce time: " << (start_p - start_r) * 1000 << "ms\n";
+    cerr << "\tSort & print time: " << (end - start_p) * 1000 << "ms\n";
     return 0;
 }

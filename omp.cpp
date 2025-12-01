@@ -11,7 +11,7 @@
 using namespace std;
 
 vector<string> readers_q;
-vector<queue<pair<string, size_t>>> reducer_queues;
+vector<vector<pair<string, size_t>>> reducer_queues;
 unordered_map<string, size_t> global_counts;
 
 size_t total_words;
@@ -125,7 +125,7 @@ void mapping_step() {
     for (auto el : buckets) {
         int index = hash_str(el.first, num_reducers);
         omp_set_lock(&reducer_locks[index]);
-        reducer_queues[index].push(el);
+        reducer_queues[index].push_back(el);
         omp_unset_lock(&reducer_locks[index]);
     }
 }
@@ -133,12 +133,16 @@ void mapping_step() {
 void reduce_step(int id) {
     // Use local hash table for partial results
     unordered_map<string, size_t> local_result;
-    while (!reducer_queues[id].empty()) {
-        pair<string, size_t> cur_entry = reducer_queues[id].front();
-        reducer_queues[id].pop();
+    
+    for(auto &cur_entry : reducer_queues[id]) {
         local_result[cur_entry.first] += cur_entry.second;
     }
-    // Merge partial results into global results
+    // while (!reducer_queues[id].empty()) {
+    //     pair<string, size_t> cur_entry = reducer_queues[id].front();
+    //     reducer_queues[id].pop();
+    //     local_result[cur_entry.first] += cur_entry.second;
+    // }
+    //Merge partial results into global results
     omp_set_lock(&global_counts_lock);
     for (auto &el : local_result) {
         global_counts[el.first] += el.second;
@@ -214,10 +218,9 @@ int main(int argc, char* argv[]) {
     });
 
     // Writing step
-    ofstream fout("results_omp.txt");
-    fout << "Filename: " << argv[1] << ", total words: " << total_words << '\n';
+    cout << "Filename: " << argv[1] << ", total words: " << total_words << "\n";
     for (size_t i = 0; i < counts.size(); ++i) {
-        fout << "[" << i << "] " << counts[i].first << ": " << counts[i].second << '\n';
+        cout << "[" << i << "] " << counts[i].first << ": " << counts[i].second << "\n";
     }
 
     end = omp_get_wtime();
