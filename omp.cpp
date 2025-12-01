@@ -157,15 +157,11 @@ void mapping_step() {
 void reduce_step(int id) {
     // Use local hash table for partial results
     unordered_map<string, size_t> local_result;
-    
+
     for(auto &cur_entry : reducer_queues[id]) {
         local_result[cur_entry.first] += cur_entry.second;
     }
-    // while (!reducer_queues[id].empty()) {
-    //     pair<string, size_t> cur_entry = reducer_queues[id].front();
-    //     reducer_queues[id].pop();
-    //     local_result[cur_entry.first] += cur_entry.second;
-    // }
+
     //Merge partial results into global results
     omp_set_lock(&global_counts_lock);
     for (auto &el : local_result) {
@@ -242,9 +238,10 @@ int main(int argc, char* argv[]) {
     });
 
     // Writing step
-    cout << "Filename: " << argv[1] << ", total words: " << total_words << "\n";
+    ofstream fout("results_omp.txt");
+    fout << "Filename: " << argv[1] << ", total words: " << file_word_count << '\n';
     for (size_t i = 0; i < counts.size(); ++i) {
-        cout << "[" << i << "] " << counts[i].first << ": " << counts[i].second << "\n";
+        fout << "[" << i << "] " << counts[i].first << ": " << counts[i].second << '\n';
     }
 
     end = omp_get_wtime();
