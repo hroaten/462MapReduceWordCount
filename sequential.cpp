@@ -10,49 +10,65 @@
 using namespace std;
 
 void process_word(string &w) {
-    // Remove punctuation at beginning
-    while (!w.empty() && ispunct(w[0])) {
-        w.erase(0, 1);
+    // Remove punctuation and non-ascii chars at beginning
+    while (!w.empty()) {
+        signed char c = w.front();
+        if (c < 0 || ispunct(c)) {
+            w.erase(0, 1);
+            continue;
+        }
+        break;
     }
-    // Remove punctuation at end
-    while (!w.empty() && ispunct(w[w.size() - 1])) {
-        w.pop_back();
+    // Remove punctuation and non-ascii chars at end
+    while (!w.empty()) {
+        signed char c = w.back();
+        if (c < 0 || ispunct(c)) {
+            w.pop_back();
+            continue;
+        }
+        break;
     }
     // Convert all letters to lowercase
-    for (size_t i = 0; i < w.length(); ++i) {
-        if (isupper(w[i])) {
-            w[i] = tolower(w[i]);
+    for (char &ch : w) {
+        unsigned char c = static_cast<unsigned char>(ch);
+        if (isupper(c)) {
+            ch = tolower(c);
         }
     }
 }
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        fprintf(stderr, "usage: %s <input_file>\n", argv[0]);
+        fprintf(stderr, "usage: %s <input_files>\n", argv[0]);
         return 1;
     }
+
+    vector<pair<string, size_t>> raw_tuples;
+    size_t file_word_count = 0;
 
     double start, end;
     start = omp_get_wtime();
 
+
     // File reading step
-    ifstream fin(argv[1]);
-    if (!fin) {
-        fprintf(stderr, "error: unable to open input file: %s\n", argv[1]);
-        return 1;
-    }
-
-    string word;
-    vector<pair<string, size_t>> raw_tuples;
-    size_t file_word_count = 0;
-
-    while (fin >> word) {
-        process_word(word);
-        // Map step
-        if (!word.empty()) {          // avoid pushing empty strings
-            file_word_count++;
-            raw_tuples.push_back(make_pair(word, 1));
+    size_t f_count = 1;
+    while (argv[f_count]) {
+        ifstream fin(argv[f_count]);
+        if (!fin) {
+            fprintf(stderr, "error: unable to open input file: %s\n", argv[f_count]);
+            return 1;
         }
+
+        string word;
+        while (fin >> word) {
+            process_word(word);
+            // Map step
+            if (!word.empty()) {          // avoid pushing empty strings
+                file_word_count++;
+                raw_tuples.push_back({word, 1});
+            }
+        }
+        f_count++;
     }
 
     // Shuffle step
@@ -68,7 +84,7 @@ int main(int argc, char* argv[]) {
         for (size_t i = 0; i < entry.second.size(); ++i) {
             sum += entry.second[i];
         }
-        counts.push_back(make_pair(entry.first, sum));
+        counts.push_back({entry.first, sum});
     }
 
     // Sort in alphabetical order
@@ -76,11 +92,10 @@ int main(int argc, char* argv[]) {
         return a.first < b.first;
     });
 
-    // Writing step
-    ofstream fout("results_seq.txt");
-    fout << "Filename: " << argv[1] << ", total words: " << file_word_count << '\n';
+    // Print step
+    cout << "Filename: " << argv[1] << ", total words: " << file_word_count << endl;
     for (size_t i = 0; i < counts.size(); ++i) {
-        fout << "[" << i << "] " << counts[i].first << ": " << counts[i].second << '\n';
+        cout << "[" << i << "] " << counts[i].first << ": " << counts[i].second << endl;
     }
 
     end = omp_get_wtime();
