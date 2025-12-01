@@ -23,18 +23,29 @@ vector<omp_lock_t> reducer_locks;
 omp_lock_t global_counts_lock;
 
 void process_word(string &w) {
-    // Remove punctuation at beginning
-    while (!w.empty() && ispunct(w[0])) {
-        w.erase(0, 1);
+    // Remove punctuation and non-ascii chars at beginning
+    while (!w.empty()) {
+        signed char c = w.front();
+        if (c < 0 || ispunct(c)) {
+            w.erase(0, 1);
+            continue;
+        }
+        break;
     }
-    // Remove punctuation at end
-    while (!w.empty() && ispunct(w[w.size() - 1])) {
-        w.pop_back();
+    // Remove punctuation and non-ascii chars at end
+    while (!w.empty()) {
+        signed char c = w.back();
+        if (c < 0 || ispunct(c)) {
+            w.pop_back();
+            continue;
+        }
+        break;
     }
     // Convert all letters to lowercase
-    for (size_t i = 0; i < w.length(); ++i) {
-        if (isupper(w[i])) {
-            w[i] = tolower(w[i]);
+    for (char &ch : w) {
+        unsigned char c = static_cast<unsigned char>(ch);
+        if (isupper(c)) {
+            ch = tolower(c);
         }
     }
 }
@@ -58,8 +69,21 @@ void read_file (char* fname) {
         if (!word.empty()) {          // avoid pushing empty strings
             wc++;
             words.push_back(word);
+
+            // Check if current batch is full, merge to the readers_q if it is
+            if (words.size() == chunk_size) {
+                omp_set_lock(&readers_lock);
+                readers_q.insert(readers_q.end(),
+                                 make_move_iterator(words.begin()),
+                                 make_move_iterator(words.end()));
+                omp_unset_lock(&readers_lock);
+
+                words.clear();
+            }
         }
     }
+
+    // Merge any remaining words
     omp_set_lock(&readers_lock);
     readers_q.insert(readers_q.end(), make_move_iterator(words.begin()), make_move_iterator(words.end()));
     omp_unset_lock(&readers_lock);
@@ -159,7 +183,7 @@ int main(int argc, char* argv[]) {
     int n_threads = omp_get_max_threads();
     int num_mappers = n_threads;
     num_reducers = n_threads * 2;  // Works best on my laptop -- test on ISAAC
-    files_remain = argc - 1;\
+    files_remain = argc - 1;
 
     cerr << "Testing " <<  n_threads << " thread(s)\n";
 
