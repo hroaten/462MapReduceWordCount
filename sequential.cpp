@@ -92,10 +92,11 @@ int main(int argc, char* argv[]) {
         return a.first < b.first;
     });
 
-    // Print step
-    cout << "Filename: " << argv[1] << ", total words: " << file_word_count << endl;
+    // Writing step
+    ofstream fout("results_omp.txt");
+    fout << "Filename: " << argv[1] << ", total words: " << file_word_count << '\n';
     for (size_t i = 0; i < counts.size(); ++i) {
-        cout << "[" << i << "] " << counts[i].first << ": " << counts[i].second << endl;
+        fout << "[" << i << "] " << counts[i].first << ": " << counts[i].second << '\n';
     }
 
     end = omp_get_wtime();
