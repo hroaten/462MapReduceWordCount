@@ -239,7 +239,7 @@ int main(int argc, char* argv[]) {
 
     // Writing step
     ofstream fout("results_omp.txt");
-    fout << "Filename: " << argv[1] << ", total words: " << file_word_count << '\n';
+    fout << "Filename: " << argv[1] << ", total words: " << total_words << '\n';
     for (size_t i = 0; i < counts.size(); ++i) {
         fout << "[" << i << "] " << counts[i].first << ": " << counts[i].second << '\n';
     }
