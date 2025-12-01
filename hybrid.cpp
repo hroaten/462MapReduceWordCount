@@ -166,12 +166,15 @@ void exchange_data(int my_rank) {
             }
             continue;
         }
+        //send_N, recv_N - Number of words being exchanged between my_rank and rank i
         int send_N = send_buffers[i].size();
         int recv_N = 0;
         MPI_Sendrecv(&send_N ,1 , MPI_INT, i ,0,
                      &recv_N , 1 , MPI_INT, i , 0 , 
                      MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
+        //*_lengths = lengths of words being exchanged
+        //*_counts = word count for each word exhcanged between ranks
         vector<int> send_lengths(send_N);
         vector<int> send_counts(send_N);
         
@@ -183,7 +186,7 @@ void exchange_data(int my_rank) {
             send_counts[j] = send_buffers[i][j].second;
             total_send_chars += len;
         }
-
+        //*_chars = buffers of all characters exchanged 
         vector<char> send_chars(total_send_chars);
         int offset = 0;
         for(int j = 0; j < send_N; j++){
@@ -195,7 +198,7 @@ void exchange_data(int my_rank) {
 
         vector<int> recv_lengths(recv_N);
         vector<int> recv_counts(recv_N);
-
+        //exchange word lengths 
         MPI_Sendrecv(send_lengths.data() , send_N , MPI_INT, i, 1, 
                      recv_lengths.data() , recv_N , MPI_INT, i, 1,
                      MPI_COMM_WORLD, MPI_STATUS_IGNORE);
@@ -204,15 +207,16 @@ void exchange_data(int my_rank) {
         for(int len : recv_lengths) total_recv_chars += len;
 
         vector <char> recv_chars(total_recv_chars);
-
+        //exhchange actual words 
         MPI_Sendrecv(send_chars.data(), total_send_chars , MPI_CHAR, i, 2, 
                      recv_chars.data(), total_recv_chars, MPI_CHAR, i, 2,
                      MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        
+        //exchange counts for unpacking 
         MPI_Sendrecv(send_counts.data(), send_N , MPI_INT, i, 3, 
                      recv_counts.data(), recv_N, MPI_INT , i, 3,
                      MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         
+        //unpack words recieved and distribute to reducer queues
         offset = 0;
         for(int j = 0; j < recv_N; j++){
             int len = recv_lengths[j];
@@ -227,7 +231,6 @@ void exchange_data(int my_rank) {
                 reducer_queues[idx].push_back({word, count});
             }
         }
-
     }
 }
 
