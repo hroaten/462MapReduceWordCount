@@ -17,6 +17,8 @@ unordered_map<string, size_t> global_counts;
 size_t total_words;
 size_t files_remain;
 int num_reducers;
+int num_readers;
+int readers_avail;
 
 omp_lock_t readers_lock;
 vector<omp_lock_t> reducer_locks;
@@ -40,6 +42,10 @@ void process_word(string &w) {
 }
 
 void read_file (char* fname) {
+
+    #pragma omp atomic
+    readers_avail--;
+
     size_t wc = 0;
     ifstream fin(fname);
     if (!fin) {
@@ -69,6 +75,9 @@ void read_file (char* fname) {
 
     #pragma omp atomic
     files_remain--;
+
+    #pragma omp atomic 
+    readers_avail++;
 }
 
 int hash_str(string s, int R) {
@@ -158,9 +167,11 @@ int main(int argc, char* argv[]) {
 
     int n_threads = omp_get_max_threads();
     int num_mappers = n_threads;
+    num_readers = n_threads * 2;
     num_reducers = n_threads * 2;  // Works best on my laptop -- test on ISAAC
     files_remain = argc - 1;\
 
+    readers_avail = num_readers;
     cerr << "Testing " <<  n_threads << " thread(s)\n";
 
     omp_init_lock(&readers_lock);
@@ -181,11 +192,13 @@ int main(int argc, char* argv[]) {
             // File reading step
             size_t f_count = 1;
             while (argv[f_count]) {
-                #pragma omp task firstprivate(f_count)
-                {
-                    read_file(argv[f_count]);
+                if(readers_avail > 0) {
+                    #pragma omp task firstprivate(f_count)
+                    {
+                        read_file(argv[f_count]);
+                    }
+                    f_count++;
                 }
-                f_count++;
             }
 
             // Mapping step
