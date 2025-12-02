@@ -187,12 +187,12 @@ int main(int argc, char* argv[]) {
 
     int n_threads = omp_get_max_threads();
     int num_mappers = n_threads;
-    num_readers = n_threads * 2;
+    num_readers = 2;
     num_reducers = n_threads * 2;  // Works best on my laptop -- test on ISAAC
     files_remain = argc - 1;
 
     readers_avail = num_readers;
-    cerr << "Testing " <<  n_threads << " thread(s)\n";
+    cerr << "Testing " <<  n_threads << " thread(s), " << num_readers << " readers\n";
 
     omp_init_lock(&readers_lock);
     omp_init_lock(&global_counts_lock);
@@ -211,8 +211,12 @@ int main(int argc, char* argv[]) {
         {
             // File reading step
             size_t f_count = 1;
+            int r;
             while (argv[f_count]) {
-                if(readers_avail > 0) {
+                #pragma omp atomic read
+                r = readers_avail;
+
+                if(r > 0) {
                     #pragma omp task firstprivate(f_count)
                     {
                         read_file(argv[f_count]);
