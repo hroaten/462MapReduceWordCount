@@ -255,15 +255,28 @@ void gather_results(int my_rank) {
             int N;
             MPI_Recv(&N, 1, MPI_INT, i, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
-            for (int j = 0; j < N; ++j) {
-                int len;
-                MPI_Recv(&len, 1, MPI_INT, i, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                string w;
-                w.resize(len);
-                MPI_Recv(&w[0], len, MPI_CHAR, i, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                int count;
-                MPI_Recv(&count, 1, MPI_INT, i, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                global_counts[w] += count;
+            if(N == 0) continue;
+
+            vector<int> lengths(N);
+            vector<int> counts(N);
+
+            MPI_Recv(lengths.data(), N, MPI_INT, i, 1, MPI_COMM_WORLD , MPI_STATUS_IGNORE);
+            MPI_Recv(counts.data(), N, MPI_INT, i, 2, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+            int total_chars = 0;
+            for(int len : lengths) {
+                total_chars += len;
+            }
+
+            vector<char> chars(total_chars);
+            MPI_Recv(chars.data(), total_chars, MPI_CHAR, i, 3, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            
+            int offset = 0;
+            for(int i = 0; i < N; i++){
+                string word;
+                word.assign(chars.data() + offset, lengths[i]);
+                global_counts[word] += counts[i];
+                offset += lengths[i];
             }
         }
     }
@@ -271,15 +284,34 @@ void gather_results(int my_rank) {
         int N = global_counts.size();
         MPI_Send(&N, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
 
-        for (auto &el : global_counts) {
-            string w = el.first;
-            int len = w.length();
-            int count = el.second;
+        if (N == 0 )return;
+        
+        vector<int>lengths;
+        vector<int>counts;
+        lengths.reserve(N);
+        counts.reserve(N);
 
-            MPI_Send(&len, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
-            MPI_Send(w.data(), len, MPI_CHAR, 0, 0, MPI_COMM_WORLD);
-            MPI_Send(&count, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
+        int total_chars = 0;
+        for(auto &el : global_counts) {
+            string word = el.first;
+            int len = word.size();
+            lengths.push_back(len);
+            counts.push_back(el.second);
+            total_chars += len;
         }
+
+        MPI_Send(lengths.data() , N , MPI_INT , 0 , 1 , MPI_COMM_WORLD);
+        MPI_Send(counts.data(), N, MPI_INT, 0, 2, MPI_COMM_WORLD);
+
+        vector<char> chars(total_chars);
+        int offset = 0;
+        for(auto &el : global_counts) {
+            string word = el.first;
+            int len = word.size();
+            memcpy(chars.data() + offset, word.data(), len);
+            offset += len;
+        }   
+        MPI_Send(chars.data(), total_chars, MPI_CHAR, 0, 3, MPI_COMM_WORLD);
     }
 }
 
@@ -459,13 +491,13 @@ int main(int argc, char* argv[]) {
 
     // Print step
     if (rank == 0) {
-        ofstream out("hybrid_out.txt");
-        out << "Filename: " << argv[1] << ", total words: " << global_total_words << "\n";
+        ofstream fout("hybrid_out.txt");
+        fout << "Filename: " << argv[1] << ", total words: " << global_total_words << "\n";
         // ISAAC is having issues printing too much output, only print the number of unique words
         // Error: srun: error: eio_handle_mainloop: Abandoning IO 60 secs after job shutdown initiated
         //out << "Unique words found: " << counts.size() << "\n";
         for (size_t i = 0; i < counts.size(); ++i) {
-            out << "[" << i << "] " << counts[i].first << ": " << counts[i].second << "\n";
+            fout << "[" << i << "] " << counts[i].first << ": " << counts[i].second << "\n";
         };
     }
 
