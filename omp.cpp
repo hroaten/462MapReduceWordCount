@@ -25,18 +25,29 @@ vector<omp_lock_t> reducer_locks;
 omp_lock_t global_counts_lock;
 
 void process_word(string &w) {
-    // Remove punctuation at beginning
-    while (!w.empty() && ispunct(w[0])) {
-        w.erase(0, 1);
+    // Remove punctuation and non-ascii chars at beginning
+    while (!w.empty()) {
+        signed char c = w.front();
+        if (c < 0 || ispunct(c)) {
+            w.erase(0, 1);
+            continue;
+        }
+        break;
     }
-    // Remove punctuation at end
-    while (!w.empty() && ispunct(w[w.size() - 1])) {
-        w.pop_back();
+    // Remove punctuation and non-ascii chars at end
+    while (!w.empty()) {
+        signed char c = w.back();
+        if (c < 0 || ispunct(c)) {
+            w.pop_back();
+            continue;
+        }
+        break;
     }
     // Convert all letters to lowercase
-    for (size_t i = 0; i < w.length(); ++i) {
-        if (isupper(w[i])) {
-            w[i] = tolower(w[i]);
+    for (char &ch : w) {
+        unsigned char c = static_cast<unsigned char>(ch);
+        if (isupper(c)) {
+            ch = tolower(c);
         }
     }
 }
@@ -64,8 +75,21 @@ void read_file (char* fname) {
         if (!word.empty()) {          // avoid pushing empty strings
             wc++;
             words.push_back(word);
+
+            // Check if current batch is full, merge to the readers_q if it is
+            if (words.size() == chunk_size) {
+                omp_set_lock(&readers_lock);
+                readers_q.insert(readers_q.end(),
+                                 make_move_iterator(words.begin()),
+                                 make_move_iterator(words.end()));
+                omp_unset_lock(&readers_lock);
+
+                words.clear();
+            }
         }
     }
+
+    // Merge any remaining words
     omp_set_lock(&readers_lock);
     readers_q.insert(readers_q.end(), make_move_iterator(words.begin()), make_move_iterator(words.end()));
     omp_unset_lock(&readers_lock);
@@ -142,15 +166,11 @@ void mapping_step() {
 void reduce_step(int id) {
     // Use local hash table for partial results
     unordered_map<string, size_t> local_result;
-    
+
     for(auto &cur_entry : reducer_queues[id]) {
         local_result[cur_entry.first] += cur_entry.second;
     }
-    // while (!reducer_queues[id].empty()) {
-    //     pair<string, size_t> cur_entry = reducer_queues[id].front();
-    //     reducer_queues[id].pop();
-    //     local_result[cur_entry.first] += cur_entry.second;
-    // }
+
     //Merge partial results into global results
     omp_set_lock(&global_counts_lock);
     for (auto &el : local_result) {
@@ -169,7 +189,7 @@ int main(int argc, char* argv[]) {
     int num_mappers = n_threads;
     num_readers = n_threads * 2;
     num_reducers = n_threads * 2;  // Works best on my laptop -- test on ISAAC
-    files_remain = argc - 1;\
+    files_remain = argc - 1;
 
     readers_avail = num_readers;
     cerr << "Testing " <<  n_threads << " thread(s)\n";
@@ -231,9 +251,10 @@ int main(int argc, char* argv[]) {
     });
 
     // Writing step
-    cout << "Filename: " << argv[1] << ", total words: " << total_words << "\n";
+    ofstream fout("results_omp.txt");
+    fout << "Filename: " << argv[1] << ", total words: " << total_words << '\n';
     for (size_t i = 0; i < counts.size(); ++i) {
-        cout << "[" << i << "] " << counts[i].first << ": " << counts[i].second << "\n";
+        fout << "[" << i << "] " << counts[i].first << ": " << counts[i].second << '\n';
     }
 
     end = omp_get_wtime();
